@@ -6,6 +6,7 @@ from werkzeug.utils import secure_filename
 from tensorflow.keras.models import load_model
 from datetime import datetime
 import json
+import gdown
 
 # Import functions from training.py
 from training import detect_and_recognize_faces
@@ -120,6 +121,23 @@ def upload_file():
 @app.route('/outputs/<filename>')
 def output_file(filename):
     return send_from_directory(app.config['OUTPUT_FOLDER'], filename)
+
+def download_model_if_needed():
+    model_files = [f for f in os.listdir('.') if f.endswith('.keras') and f.startswith('face_recognition_model_')]
+    if not model_files:
+        print("Downloading model from external source...")
+        # Example using gdown for Google Drive
+        url = 'YOUR_GOOGLE_DRIVE_LINK'
+        output = 'face_recognition_model_latest.keras'
+        gdown.download(url, output, quiet=False)
+        
+        # Also download label encoder classes if needed
+        if not os.path.exists('label_encoder_classes.npy'):
+            url_labels = 'YOUR_GOOGLE_DRIVE_LINK_FOR_LABELS'
+            gdown.download(url_labels, 'label_encoder_classes.npy', quiet=False)
+
+# Call this function before loading the model
+download_model_if_needed()
 
 if __name__ == '__main__':
     app.run(debug=True) 
