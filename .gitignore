@@ -4,3 +4,19 @@
 
 *.h5
 *.keras
+
+.env
+
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+
+/uploads/*
+/outputs/*
+
+/final_dataset/*
+/dataset/*
+

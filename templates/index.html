@@ -4,52 +4,172 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Face Recognition System</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding: 20px;
+        }
+        .header {
+            background-color: #3498db;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .content-box {
+            background-color: white;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .person-item {
+            padding: 10px;
+            border-left: 4px solid #3498db;
+            margin-bottom: 10px;
+        }
+        .confidence-bar {
+            height: 20px;
+            background-color: #2ecc71;
+            border-radius: 10px;
+            color: white;
+            text-align: center;
+            line-height: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .result-image {
+            max-width: 100%;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        .description-box {
+            background-color: #f1f9ff;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 5px;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
-        <header>
+        <div class="header">
             <h1>Face Recognition System</h1>
-        </header>
+        </div>
         
-        <main>
-            <div class="upload-section">
-                <h2>Upload an Image</h2>
-                <form id="upload-form" enctype="multipart/form-data">
-                    <div class="file-input-container">
-                        <input type="file" id="file-input" name="file" accept=".jpg, .jpeg, .png">
-                        <label for="file-input" class="file-label">
-                            <span id="file-name">Choose a file</span>
-                            <span class="browse-btn">Browse</span>
-                        </label>
-                    </div>
-                    <button type="submit" id="upload-btn">Recognize Faces</button>
-                </form>
-                <div id="loading" class="hidden">
-                    <div class="spinner"></div>
-                    <p>Processing image...</p>
+        <div class="content-box">
+            <h3>Upload an Image</h3>
+            <form id="uploadForm" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <input class="form-control" type="file" id="imageFile" name="file" accept=".jpg,.jpeg,.png">
                 </div>
-            </div>
-            
-            <div id="results-section" class="hidden">
-                <h2>Recognition Results</h2>
-                <div id="results-container">
-                    <div id="image-container">
-                        <img id="result-image" src="" alt="Recognition Result">
-                    </div>
-                    <div id="persons-container">
-                        <h3>Detected Persons</h3>
-                        <ul id="persons-list"></ul>
+                <button type="submit" class="btn btn-success w-100">Recognize Faces</button>
+            </form>
+        </div>
+        
+        <div id="resultsSection" class="content-box" style="display: none;">
+            <h3>Recognition Results</h3>
+            <div class="row">
+                <div class="col-md-7">
+                    <img id="resultImage" class="result-image" src="" alt="Recognition Result">
+                </div>
+                <div class="col-md-5">
+                    <h4>Detected Persons</h4>
+                    <div id="personsContainer"></div>
+                    
+                    <div id="descriptionContainer" class="description-box" style="display: none;">
+                        <h4>Image Analysis</h4>
+                        <p id="imageDescription"></p>
                     </div>
                 </div>
             </div>
-        </main>
-        
-        <footer>
-            <p>&copy; 2025 Face Recognition System</p>
-        </footer>
+        </div>
     </div>
     
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const fileInput = document.getElementById('imageFile');
+            
+            if (fileInput.files.length === 0) {
+                alert('Please select an image file');
+                return;
+            }
+            
+            formData.append('file', fileInput.files[0]);
+            
+            // Show loading state
+            document.querySelector('button[type="submit"]').innerHTML = 'Processing...';
+            document.querySelector('button[type="submit"]').disabled = true;
+            
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Reset button
+                document.querySelector('button[type="submit"]').innerHTML = 'Recognize Faces';
+                document.querySelector('button[type="submit"]').disabled = false;
+                
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+                
+                // Display results
+                document.getElementById('resultsSection').style.display = 'block';
+                document.getElementById('resultImage').src = data.image_path;
+                
+                // Display persons
+                const personsContainer = document.getElementById('personsContainer');
+                personsContainer.innerHTML = '';
+                
+                if (data.persons && data.persons.length > 0) {
+                    data.persons.forEach(person => {
+                        const personDiv = document.createElement('div');
+                        personDiv.className = 'person-item';
+                        
+                        const percentConfidence = Math.round(person.confidence * 100);
+                        
+                        personDiv.innerHTML = `
+                            <div class="d-flex justify-content-between">
+                                <strong>${person.name}</strong>
+                                <span>${percentConfidence}%</span>
+                            </div>
+                            <div class="confidence-bar" style="width: ${percentConfidence}%"></div>
+                        `;
+                        
+                        personsContainer.appendChild(personDiv);
+                    });
+                } else {
+                    personsContainer.innerHTML = '<p>No persons detected</p>';
+                }
+                
+                // Display image description if available
+                const descriptionContainer = document.getElementById('descriptionContainer');
+                const imageDescription = document.getElementById('imageDescription');
+                
+                if (data.image_description) {
+                    imageDescription.textContent = data.image_description;
+                    descriptionContainer.style.display = 'block';
+                } else {
+                    descriptionContainer.style.display = 'none';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while processing the image. Please try again.');
+                document.querySelector('button[type="submit"]').innerHTML = 'Recognize Faces';
+                document.querySelector('button[type="submit"]').disabled = false;
+            });
+        });
+    </script>
 </body>
 </html> 
