@@ -12,6 +12,9 @@ from dotenv import load_dotenv
 import mediapipe as mp
 import dlib
 from imutils import face_utils
+import zipfile
+import shutil
+import random
 
 # Load environment variables from .env file
 load_dotenv()
@@ -272,6 +275,62 @@ def get_image_description(image_path, detected_persons):
         print(f"Error getting image description: {str(e)}")
         return "Could not generate image description."
 
+# Function to augment an image
+def augment_image(image):
+    """Applies a series of random augmentations to the image."""
+    # Horizontal Flip
+    if random.random() > 0.5:
+        image = cv2.flip(image, 1)
+
+    # Rotation
+    angle = random.randint(-30, 30)
+    h, w = image.shape[:2]
+    matrix = cv2.getRotationMatrix2D((w//2, h//2), angle, 1)
+    image = cv2.warpAffine(image, matrix, (w, h))
+
+    # Scaling
+    scale = random.uniform(0.8, 1.2)
+    image = cv2.resize(image, (int(w * scale), int(h * scale)))
+
+    # Cropping (random 80-100% of image)
+    h, w = image.shape[:2]  # Get new dimensions after scaling
+    crop_x = random.randint(0, max(1, w//5))
+    crop_y = random.randint(0, max(1, h//5))
+    if crop_y < h and crop_x < w:  # Ensure valid crop dimensions
+        image = image[crop_y:h-crop_y, crop_x:w-crop_x]
+
+    # Brightness/Contrast
+    alpha = random.uniform(0.7, 1.3)  # Contrast
+    beta = random.randint(-30, 30)  # Brightness
+    image = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+
+    return image
+
+# Function to train the face recognition model
+def train_face_recognition_model(dataset_path):
+    """Train the face recognition model and save encodings."""
+    from training import train_and_save_encodings
+    
+    print(f"Training face recognition model with data from {dataset_path}")
+    print(f"Directory contents: {os.listdir(dataset_path)}")
+    
+    # Check if the directory structure is correct
+    person_folders = [f for f in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, f))]
+    print(f"Found {len(person_folders)} person folders: {person_folders}")
+    
+    # Check each person folder for images
+    for person in person_folders:
+        person_dir = os.path.join(dataset_path, person)
+        image_files = [f for f in os.listdir(person_dir) 
+                      if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        print(f"Person '{person}' has {len(image_files)} images")
+    
+    # Train the model
+    known_face_encodings, known_face_names = train_and_save_encodings(dataset_path, "known_faces.pkl")
+    print(f"Training complete. Encoded {len(known_face_encodings)} faces for {len(set(known_face_names))} people.")
+    
+    return len(known_face_encodings), len(set(known_face_names))
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -399,6 +458,177 @@ def upload_file():
 @app.route('/outputs/<filename>')
 def output_file(filename):
     return send_from_directory(app.config['OUTPUT_FOLDER'], filename)
+
+@app.route('/training', methods=['GET', 'POST'])
+def training():
+    if request.method == 'GET':
+        return render_template('training.html')
+    
+    if request.method == 'POST':
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part'}), 400
+        
+        file = request.files['file']
+        
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+        
+        if file and file.filename.endswith('.zip'):
+            try:
+                # Create temporary directories
+                temp_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'temp_training')
+                dataset_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'dataset')
+                augmented_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'augmented_dataset')
+                
+                # Clean up any existing directories
+                for dir_path in [temp_dir, dataset_dir, augmented_dir]:
+                    if os.path.exists(dir_path):
+                        shutil.rmtree(dir_path)
+                    os.makedirs(dir_path)
+                
+                # Save and extract the zip file
+                zip_path = os.path.join(temp_dir, secure_filename(file.filename))
+                file.save(zip_path)
+                
+                print(f"Saved ZIP file to {zip_path}")
+                print(f"Extracting zip file to {dataset_dir}")
+
+                # Check the ZIP file contents before extraction
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    file_list = zip_ref.namelist()
+                    print(f"ZIP contains {len(file_list)} files/folders")
+                    print(f"First 10 entries: {file_list[:10]}")
+                    
+                    # Extract the ZIP file
+                    zip_ref.extractall(dataset_dir)
+
+                print(f"Extraction complete. Dataset directory contents: {os.listdir(dataset_dir)}")
+
+                # Check if we need to handle a nested directory structure
+                # Sometimes ZIP files contain a single root folder
+                if len(os.listdir(dataset_dir)) == 1:
+                    first_item = os.path.join(dataset_dir, os.listdir(dataset_dir)[0])
+                    if os.path.isdir(first_item):
+                        print(f"Found single root directory: {first_item}")
+                        # If the ZIP contained a single folder, use its contents as our dataset
+                        if len(os.listdir(first_item)) > 0:
+                            print(f"Moving contents from {first_item} to {dataset_dir}")
+                            for item in os.listdir(first_item):
+                                shutil.move(
+                                    os.path.join(first_item, item),
+                                    os.path.join(dataset_dir, item)
+                                )
+                            # Remove the now-empty directory
+                            os.rmdir(first_item)
+                            print(f"After restructuring, dataset directory contains: {os.listdir(dataset_dir)}")
+                
+                # Process each person's folder
+                person_count = 0
+                total_images = 0
+                augmented_images = 0
+                
+                print(f"Dataset directory contents: {os.listdir(dataset_dir)}")
+
+                for person_folder in os.listdir(dataset_dir):
+                    folder_path = os.path.join(dataset_dir, person_folder)
+                    
+                    if not os.path.isdir(folder_path):
+                        print(f"Skipping {person_folder} as it's not a directory")
+                        continue  # Skip if not a directory
+                    
+                    person_count += 1
+                    output_folder_path = os.path.join(augmented_dir, person_folder)
+                    os.makedirs(output_folder_path, exist_ok=True)
+                    
+                    # Copy original images to augmented directory
+                    images = []
+                    for img_name in os.listdir(folder_path):
+                        if img_name.lower().endswith(('.png', '.jpg', '.jpeg')):
+                            img_path = os.path.join(folder_path, img_name)
+                            new_img_path = os.path.join(output_folder_path, img_name)
+                            print(f"Copying {img_path} to {new_img_path}")
+                            shutil.copy2(img_path, new_img_path)
+                            images.append(img_name)
+                    
+                    original_count = len(images)
+                    total_images += original_count
+                    
+                    print(f"Processing {person_folder}: {original_count} original images")
+                    
+                    # If no images were found, print a warning
+                    if original_count == 0:
+                        print(f"WARNING: No images found for {person_folder}!")
+                        print(f"Folder contents: {os.listdir(folder_path)}")
+                        continue
+                    
+                    # Apply augmentation to create additional images
+                    count = original_count + 1
+                    target_count = min(500, max(50, original_count * 10))  # Aim for 10x but cap at 500
+                    
+                    print(f"Augmenting images for {person_folder} from {original_count} to target {target_count}")
+                    
+                    while len(images) < target_count and original_count > 0:
+                        # Pick a random image to augment
+                        img_name = random.choice(images[:original_count])  # Only choose from original images
+                        img_path = os.path.join(folder_path, img_name)
+                        
+                        # Load image
+                        img = cv2.imread(img_path)
+                        if img is None:
+                            print(f"Error loading {img_path}, skipping...")
+                            continue
+                        
+                        # Apply augmentation
+                        try:
+                            augmented_img = augment_image(img)
+                            
+                            # Save new image in the output folder
+                            new_img_name = f"{person_folder}_{count}.png"
+                            new_img_path = os.path.join(output_folder_path, new_img_name)
+                            cv2.imwrite(new_img_path, augmented_img)
+                            
+                            images.append(new_img_name)  # Add new image to list
+                            count += 1
+                            augmented_images += 1
+                        except Exception as e:
+                            print(f"Error augmenting image: {str(e)}")
+                    
+                    print(f"Augmentation complete for {person_folder}, now contains {len(images)} images")
+                
+                # Train the model using the augmented dataset
+                face_count, person_count = train_face_recognition_model(augmented_dir)
+                
+                # Clean up
+                for dir_path in [temp_dir, dataset_dir, augmented_dir]:
+                    if os.path.exists(dir_path):
+                        shutil.rmtree(dir_path)
+                
+                return jsonify({
+                    'message': 'Training completed successfully',
+                    'stats': {
+                        'persons': person_count,
+                        'original_images': total_images,
+                        'augmented_images': augmented_images,
+                        'encoded_faces': face_count
+                    }
+                })
+                
+            except Exception as e:
+                print(f"Error during training: {str(e)}")
+                print(traceback.format_exc())
+                
+                # Clean up on error
+                for dir_path in [temp_dir, dataset_dir, augmented_dir]:
+                    if os.path.exists(dir_path):
+                        shutil.rmtree(dir_path)
+                
+                return jsonify({'error': f'An error occurred during training: {str(e)}'}), 500
+        
+        return jsonify({'error': 'Invalid file type. Please upload a ZIP file.'}), 400
+
+@app.route('/testing', methods=['GET'])
+def testing():
+    return render_template('testing.html')
 
 if __name__ == '__main__':
     import face_recognition  # Import here to ensure it's available

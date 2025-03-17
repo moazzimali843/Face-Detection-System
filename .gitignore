@@ -21,3 +21,4 @@
 /dataset/*
 /not used/*
 
+*.pkl
