@@ -9,12 +9,21 @@ import traceback
 import base64
 import openai
 from dotenv import load_dotenv
+import mediapipe as mp
+import dlib
+from imutils import face_utils
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Import functions from training2.py instead of training.py
-from training2 import recognize_faces, load_encodings
+# Import functions from training.py
+from training import  load_encodings
+
+# Initialize MediaPipe Face Mesh
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+mp_face_mesh = mp.solutions.face_mesh
+drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=1)
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -32,6 +41,192 @@ client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
+# Install the shape predictor model if not already present
+def download_shape_predictor():
+    import urllib.request
+    import bz2
+    import os
+    import ssl
+    import certifi
+    
+    model_path = "shape_predictor_68_face_landmarks.dat"
+    if not os.path.exists(model_path):
+        print("Downloading shape predictor model...")
+        url = "http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2"
+        compressed_path = "shape_predictor_68_face_landmarks.dat.bz2"
+        
+        try:
+            # Try with proper SSL context first
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            with urllib.request.urlopen(url, context=ssl_context) as response, open(compressed_path, 'wb') as out_file:
+                out_file.write(response.read())
+            print("Downloaded with SSL verification")
+        except Exception as e:
+            print(f"SSL download failed: {str(e)}")
+            try:
+                # If that fails, try without SSL verification (not recommended but may work)
+                print("Attempting download without SSL verification...")
+                ssl_context = ssl._create_unverified_context()
+                with urllib.request.urlopen(url, context=ssl_context) as response, open(compressed_path, 'wb') as out_file:
+                    out_file.write(response.read())
+                print("Downloaded without SSL verification")
+            except Exception as e2:
+                print(f"Non-SSL download failed: {str(e2)}")
+                print("Using alternative approach...")
+                # If both methods fail, use a simpler approach
+                try:
+                    import requests
+                    print("Downloading with requests library...")
+                    response = requests.get(url, verify=False)
+                    with open(compressed_path, 'wb') as f:
+                        f.write(response.content)
+                    print("Downloaded with requests library")
+                except Exception as e3:
+                    print(f"Requests download failed: {str(e3)}")
+                    raise Exception("All download methods failed")
+        
+        # Decompress the file
+        try:
+            print("Decompressing file...")
+            with open(model_path, 'wb') as new_file, bz2.BZ2File(compressed_path, 'rb') as file:
+                for data in iter(lambda: file.read(100 * 1024), b''):
+                    new_file.write(data)
+            
+            # Remove the compressed file
+            os.remove(compressed_path)
+            print("Shape predictor model downloaded and extracted.")
+        except Exception as e:
+            print(f"Decompression failed: {str(e)}")
+            raise
+    else:
+        print(f"Shape predictor model already exists at {model_path}")
+    
+    return model_path
+
+# Function to apply facial landmarks using dlib
+def apply_face_mesh(image_path):
+    print(f"Applying facial landmarks to image: {image_path}")
+    
+    try:
+        # Try to get the shape predictor model
+        try:
+            model_path = download_shape_predictor()
+            predictor = dlib.shape_predictor(model_path)
+        except Exception as e:
+            print(f"Error downloading shape predictor: {str(e)}")
+            print("Using simplified face detection without landmarks...")
+            # If we can't get the shape predictor, we'll just use face detection
+            predictor = None
+        
+        # Initialize dlib's face detector
+        detector = dlib.get_frontal_face_detector()
+        
+        # Load the image
+        image = cv2.imread(image_path)
+        if image is None:
+            print(f"Error: Could not read image from {image_path}")
+            return None
+        
+        # Convert to grayscale for face detection
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Detect faces
+        print("Detecting faces with dlib...")
+        faces = detector(gray, 1)
+        
+        if len(faces) == 0:
+            print("No faces detected with dlib")
+            annotated_image = image.copy()
+            cv2.putText(annotated_image, "No faces detected", (20, 40), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            return annotated_image
+        
+        print(f"Detected {len(faces)} faces")
+        
+        # Create a copy of the image to draw on
+        annotated_image = image.copy()
+        
+        # Process each face
+        for i, face in enumerate(faces):
+            print(f"Processing face #{i+1}")
+            
+            # Draw face bounding box
+            x, y, w, h = face.left(), face.top(), face.width(), face.height()
+            cv2.rectangle(annotated_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            
+            # If we have the predictor, draw facial landmarks
+            if predictor:
+                # Get facial landmarks
+                shape = predictor(gray, face)
+                shape = face_utils.shape_to_np(shape)
+                
+                # Draw facial landmarks
+                for (x, y) in shape:
+                    cv2.circle(annotated_image, (x, y), 2, (0, 0, 255), -1)
+                
+                # Draw connections between landmarks for different facial features
+                # Eyes
+                for start, end in [(36, 41), (42, 47)]:
+                    points = shape[start:end+1]
+                    for i in range(len(points) - 1):
+                        cv2.line(annotated_image, tuple(points[i]), tuple(points[i+1]), (0, 255, 255), 1)
+                    cv2.line(annotated_image, tuple(points[-1]), tuple(points[0]), (0, 255, 255), 1)
+                
+                # Eyebrows
+                for start, end in [(17, 21), (22, 26)]:
+                    points = shape[start:end+1]
+                    for i in range(len(points) - 1):
+                        cv2.line(annotated_image, tuple(points[i]), tuple(points[i+1]), (255, 0, 0), 1)
+                
+                # Nose
+                points = shape[27:35+1]
+                for i in range(len(points) - 1):
+                    cv2.line(annotated_image, tuple(points[i]), tuple(points[i+1]), (0, 255, 0), 1)
+                
+                # Mouth
+                points = shape[48:59+1]
+                for i in range(len(points) - 1):
+                    cv2.line(annotated_image, tuple(points[i]), tuple(points[i+1]), (255, 0, 255), 1)
+                cv2.line(annotated_image, tuple(points[-1]), tuple(points[0]), (255, 0, 255), 1)
+                
+                # Inner mouth
+                points = shape[60:67+1]
+                for i in range(len(points) - 1):
+                    cv2.line(annotated_image, tuple(points[i]), tuple(points[i+1]), (255, 0, 255), 1)
+                cv2.line(annotated_image, tuple(points[-1]), tuple(points[0]), (255, 0, 255), 1)
+            else:
+                # If no predictor, just add a label to the face
+                cv2.putText(annotated_image, f"Face #{i+1}", (x, y-10), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+        
+        # Add a label to indicate this is the facial landmarks visualization
+        if predictor:
+            cv2.putText(annotated_image, "Facial Landmarks", (20, 40), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        else:
+            cv2.putText(annotated_image, "Face Detection Only", (20, 40), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        print("Face visualization completed successfully")
+        return annotated_image
+        
+    except Exception as e:
+        print(f"Error in face mesh processing: {str(e)}")
+        print(traceback.format_exc())
+        
+        # Return a simple error image
+        error_image = cv2.imread(image_path)
+        if error_image is None:
+            # Create a blank image if we can't read the original
+            error_image = np.zeros((400, 600, 3), dtype=np.uint8)
+        
+        cv2.putText(error_image, "Error processing face mesh", (20, 40), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv2.putText(error_image, str(e), (20, 80), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        
+        return error_image
+
 # Function to get image description using OpenAI Vision with detected names and positions
 def get_image_description(image_path, detected_persons):
     try:
@@ -46,13 +241,13 @@ def get_image_description(image_path, detected_persons):
         if ordered_names:
             # Create a descriptive prompt with positional information
             prompt_text = (
-                f"Describe what these people are doing in this image. Focus on their activities, clothing, and the setting. "
+                f"Describe the activities of each person in the image, focusing only on what they are doing individually or in a group. "
+                f"Do not describe their physical appearance, clothing, or surroundings. Be concise and ensure that each person's actions are clearly stated. "
                 f"The people in the image from LEFT to RIGHT are: {', '.join(ordered_names)}. "
-                f"Please refer to them by their names and ensure you match the correct name to the correct person based on their position from left to right. "
-                f"Be concise and descriptive."
+                f"Please refer to them by their names and accurately describe their actions based on their position from left to right."
             )
         else:
-            prompt_text = "Describe what these people are doing in this image. Focus on their activities, clothing, and the setting. Be concise."
+            prompt_text = "Describe the activities of the people in the image, focusing only on what they are doing. Do not include details about their physical appearance, clothing, or the setting. Be concise and clear in describing their actions."
         
         # Call OpenAI API with the correct format for image_url
         response = client.chat.completions.create(
@@ -106,7 +301,7 @@ def upload_file():
             except FileNotFoundError:
                 return jsonify({'error': 'Face encodings not found. Please train the model first.'}), 500
             
-            # Process the image using recognize_faces from training2.py
+            # Process the image using recognize_faces from training.py
             # We'll use the original image for processing
             image = cv2.imread(file_path)
             if image is None:
@@ -166,10 +361,24 @@ def upload_file():
                 
                 output_data = {'message': f'Detected {len(persons)} face(s)', 'persons': persons}
             
-            # Save the output image
+            # Save the output image with face recognition results
             output_filename = f"output_{timestamp}.jpg"
             output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
             cv2.imwrite(output_path, image)
+            
+            # Apply facial landmarks to the image
+            print(f"Starting facial landmarks processing for {file_path}")
+            mesh_image = apply_face_mesh(file_path)
+            if mesh_image is not None:
+                # Save the mesh image
+                mesh_filename = f"mesh_{timestamp}.jpg"
+                mesh_path = os.path.join(app.config['OUTPUT_FOLDER'], mesh_filename)
+                print(f"Saving mesh image to {mesh_path}")
+                cv2.imwrite(mesh_path, mesh_image)
+                output_data['mesh_image_path'] = f"/outputs/{mesh_filename}"
+                print(f"Mesh image path added to response: {output_data['mesh_image_path']}")
+            else:
+                print("Failed to generate mesh image")
             
             # Get image description using OpenAI Vision with detected persons and face locations
             image_description = get_image_description(file_path, persons)

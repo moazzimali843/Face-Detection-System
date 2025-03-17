@@ -44,6 +44,7 @@
             max-width: 100%;
             border-radius: 5px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            margin-bottom: 15px;
         }
         .description-box {
             background-color: #f1f9ff;
@@ -51,6 +52,27 @@
             padding: 15px;
             margin-top: 20px;
             border-radius: 5px;
+        }
+        .image-tabs {
+            margin-bottom: 15px;
+        }
+        .image-tab {
+            display: inline-block;
+            padding: 8px 15px;
+            background-color: #e9ecef;
+            border-radius: 5px 5px 0 0;
+            cursor: pointer;
+            margin-right: 5px;
+        }
+        .image-tab.active {
+            background-color: #3498db;
+            color: white;
+        }
+        .image-container {
+            display: none;
+        }
+        .image-container.active {
+            display: block;
         }
     </style>
 </head>
@@ -74,7 +96,16 @@
             <h3>Recognition Results</h3>
             <div class="row">
                 <div class="col-md-7">
-                    <img id="resultImage" class="result-image" src="" alt="Recognition Result">
+                    <div class="image-tabs">
+                        <div class="image-tab active" data-target="recognition-image">Face Recognition</div>
+                        <div class="image-tab" data-target="mesh-image">Face Mesh</div>
+                    </div>
+                    <div class="image-container active" id="recognition-image">
+                        <img id="resultImage" class="result-image" src="" alt="Recognition Result">
+                    </div>
+                    <div class="image-container" id="mesh-image">
+                        <img id="meshImage" class="result-image" src="" alt="Face Mesh Result">
+                    </div>
                 </div>
                 <div class="col-md-5">
                     <h4>Detected Persons</h4>
@@ -127,6 +158,19 @@
                 document.getElementById('resultsSection').style.display = 'block';
                 document.getElementById('resultImage').src = data.image_path;
                 
+                // Display mesh image if available
+                if (data.mesh_image_path) {
+                    document.getElementById('meshImage').src = data.mesh_image_path;
+                    document.querySelectorAll('.image-tab').forEach(tab => {
+                        tab.style.display = 'inline-block';
+                    });
+                } else {
+                    document.getElementById('meshImage').src = '';
+                    document.querySelectorAll('.image-tab[data-target="mesh-image"]').forEach(tab => {
+                        tab.style.display = 'none';
+                    });
+                }
+                
                 // Display persons
                 const personsContainer = document.getElementById('personsContainer');
                 personsContainer.innerHTML = '';
@@ -168,6 +212,22 @@
                 alert('An error occurred while processing the image. Please try again.');
                 document.querySelector('button[type="submit"]').innerHTML = 'Recognize Faces';
                 document.querySelector('button[type="submit"]').disabled = false;
+            });
+        });
+        
+        // Image tab switching
+        document.querySelectorAll('.image-tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                // Remove active class from all tabs and containers
+                document.querySelectorAll('.image-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.image-container').forEach(c => c.classList.remove('active'));
+                
+                // Add active class to clicked tab
+                this.classList.add('active');
+                
+                // Show corresponding container
+                const targetId = this.getAttribute('data-target');
+                document.getElementById(targetId).classList.add('active');
             });
         });
     </script>
