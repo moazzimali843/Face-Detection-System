@@ -25,6 +25,14 @@ source myenv/bin/activate
 ```
 pip install -r requirements.txt
 ```
+## Create a .env file and add your OpenAI API key:
+```
+OPENAI_API_KEY="sk-proj-1234567890" 
+```
+## Important Point:
+- Delete the file known_faces.pkl before starting the training process.
+- Training will create a new known_faces.pkl file with the new encodings.
+
 ## Run the application:
 ```
 python app.py
