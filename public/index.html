@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Face Recognition App</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-functions-compat.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>Face Recognition App</h1>
+    
+    <div id="auth-container">
+      <button id="login-btn">Login with Google</button>
+    </div>
+    
+    <div id="app-container" class="hidden">
+      <div class="upload-section">
+        <h2>Upload an Image</h2>
+        <input type="file" id="image-upload" accept="image/*">
+        <button id="upload-btn">Recognize Face</button>
+      </div>
+      
+      <div class="add-face-section">
+        <h2>Add New Face</h2>
+        <input type="file" id="new-face-upload" accept="image/*">
+        <input type="text" id="face-name" placeholder="Person's name">
+        <button id="add-face-btn">Add to Database</button>
+      </div>
+      
+      <div id="result-container" class="hidden">
+        <h2>Recognition Result</h2>
+        <div class="result-content">
+          <div class="image-preview">
+            <img id="preview-image" src="" alt="Uploaded image">
+          </div>
+          <div class="recognition-result">
+            <h3 id="result-name"></h3>
+            <p id="result-description"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <script src="app.js"></script>
+</body>
+</html> 
